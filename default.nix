@@ -3,7 +3,7 @@ let
   internal = pkgs.callPackage ./internal.nix { };
 in
 {
-  inherit (internal) shell build node_modules;
+  inherit (internal) setup;
 
   tests = pkgs.callPackage ./tests { };
 
