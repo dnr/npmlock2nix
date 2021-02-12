@@ -210,33 +210,20 @@ rec {
       export NODE_PATH="$(pwd)/node_modules:$NODE_PATH"
     '';
 
-  # Description: Extract the attributes that are relevant for building node_modules and use
-  # them as defaults in case the node_modules_attrs attribute doesn't have
-  # them.
-  # Type: Set -> Set
-  get_node_modules_attrs = { node_modules_attrs ? { }, ... }@attrs:
-    let
-      getAttr = name: from: lib.optionalAttrs (builtins.hasAttr name from) { "${name}" = from.${name}; };
-      getAttrs = names: from: lib.foldl (a: b: a // (getAttr b from)) { } names;
-    in
-    (getAttrs [ "src" "nodejs" ] attrs // node_modules_attrs);
-
   node_modules =
     { src
-    , packageJson ? src + "/package.json"
-    , packageLockJson ? src + "/package-lock.json"
-    , buildInputs ? [ ]
-    , nativeBuildInputs ? [ ]
-    , nodejs ? default_nodejs
-    , preBuild ? ""
-    , postBuild ? ""
-    , preInstallLinks ? { } # set that describes which files should be linked in a specific packages folder
+    , packageJson
+    , packageLockJson
+    , buildInputs
+    , nativeBuildInputs
+    , nodejs
+    , preInstallLinks
+    , nodeModulesAttrs
     , ...
     }@args:
       assert (builtins.typeOf preInstallLinks != "set") ->
         throw "[npmlock2nix] `preInstallLinks` must be an attributeset of attributesets";
       let
-        cleanArgs = builtins.removeAttrs args [ "src" "packageJson" "packageLockJson" "buildInputs" "nativeBuildInputs" "nodejs" "preBuild" "postBuild" "preInstallLinks" ];
         lockfile = readLockfile packageLockJson;
 
         preinstall_node_modules = writeTextFile {
@@ -277,8 +264,8 @@ rec {
       in
       stdenv.mkDerivation ({
         inherit (lockfile) version;
-        pname = lockfile.name;
-        inherit src buildInputs preBuild postBuild;
+        pname = lockfile.name + "-deps";
+        inherit src buildInputs;
 
         nativeBuildInputs = nativeBuildInputs ++ [
           nodejs
@@ -327,54 +314,73 @@ rec {
 
         passthru = {
           inherit nodejs;
+          lockfile_name = lockfile.name;
           lockfile = patchedLockfile packageLockJson;
           packagesfile = patchedPackagefile packageJson;
         };
-      } // cleanArgs);
+      } // nodeModulesAttrs);
 
-  shell =
-    { node_modules_mode ? "symlink"
-    , ...
-    }@attrs:
-    let
-      nm = node_modules (get_node_modules_attrs attrs);
-      extraAttrs = builtins.removeAttrs attrs [ "node_modules_attrs" ];
-    in
-    mkShell ({
-      buildInputs = [ nm.nodejs nm ];
-      shellHook = ''
-        # FIXME: we should somehow register a GC root here in case of a symlink?
-        ${add_node_modules_to_cwd nm node_modules_mode}
-      '';
-      passthru.node_modules = nm;
-    } // extraAttrs);
-
-  build =
+  setupFullySpecified =
     { src
-    , buildCommands ? [ "npm run build" ]
-    , installPhase
-    , node_modules_mode ? "symlink"
-    , buildInputs ? [ ]
+    , buildInputs
+    , nodejs
+    , node_modules_mode
+    , buildCommands
+    , shellAttrs
+    , buildAttrs
     , ...
     }@attrs:
     let
-      nm = node_modules (get_node_modules_attrs attrs);
-      extraAttrs = builtins.removeAttrs attrs [ "node_modules_attrs" ];
+      nm = node_modules attrs;
     in
-    stdenv.mkDerivation ({
-      pname = nm.pname;
-      version = nm.version;
-      buildInputs = [ nm ] ++ buildInputs;
-      inherit src installPhase;
+    {
+      node_modules = nm;
 
-      preConfigure = add_node_modules_to_cwd nm node_modules_mode;
+      shell = mkShell ({
+        # QUESTION: why not do ++ buildInputs here?
+        buildInputs = [ nodejs nm ];
+        # QUESTION: why not include nativeBuildInputs here?
+        shellHook = ''
+          # FIXME: we should somehow register a GC root here in case of a symlink?
+          ${add_node_modules_to_cwd nm node_modules_mode}
+        '';
+      } // shellAttrs);
 
-      buildPhase = ''
-        runHook preBuild
-        ${lib.concatStringsSep "\n" buildCommands}
-        runHook postBuild
-      '';
+      build = stdenv.mkDerivation ({
+        pname = nm.lockfile_name;
+        version = nm.version;
+        # QUESTION: why not include nodejs here?
+        buildInputs = [ nm ] ++ buildInputs;
+        # QUESTION: why not include nativeBuildInputs here?
+        inherit src;
 
-      passthru.node_modules = nm;
-    } // extraAttrs);
+        preConfigure = add_node_modules_to_cwd nm node_modules_mode;
+
+        buildPhase = ''
+          runHook preBuild
+          ${lib.concatStringsSep "\n" buildCommands}
+          runHook postBuild
+        '';
+        installPhase = ''
+          echo "Please override 'buildAttrs.installPhase' to use the 'build' derivation."
+          exit 1
+        '';
+      } // buildAttrs);
+    };
+
+  defaults = { src, ... }: {
+    packageJson = src + "/package.json";
+    packageLockJson = src + "/package-lock.json";
+    buildInputs = [ ];
+    nativeBuildInputs = [ ];
+    nodejs = default_nodejs;
+    node_modules_mode = "symlink";
+    buildCommands = [ "npm run build" ];
+    preInstallLinks = { }; # set that describes which files should be linked in a specific packages folder
+    nodeModulesAttrs = { };
+    shellAttrs = { };
+    buildAttrs = { };
+  };
+
+  setup = attrs: setupFullySpecified ((defaults attrs) // attrs);
 }
