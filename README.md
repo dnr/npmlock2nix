@@ -18,18 +18,18 @@ Put the following in your `shell.nix`:
 
 ```nix
 { pkgs ? import <nixpkgs> {}, nodelock2nix ? <FIXME> { inherit pkgs; } }:
-npmlock2nix.shell {
+(npmlock2nix.setup {
   src = ./.;
   nodejs = pkgs.nodejs-14_x;
   # node_modules_mode = "symlink", (default; or "copy")
   # You can override attributes passed to `node_modules` by setting
-  # `node_modules_attrs` like below.
+  # `nodeModulesAttrs` like below.
   # A few attributes (such as `nodejs` and `src`) are always inherited from the
   # shell's arguments but can be overriden.
-  # node_modules_attrs = {
+  # nodeModulesAttrs = {
   #   buildInputs = [ pkgs.libwebp ];
   # };
-}
+}).shell
 ```
 
 # Building the project
@@ -37,24 +37,49 @@ npmlock2nix.shell {
 FIXME: There are two kinds of "projects". The first kind is where you package an application and the second kind is where you generate some JS, HTML, CSS, … through node.
 FIXME: Currently this is targeting (mostly) the second class of builds. The first class is what node2nix does and we should have something compatible.
 
-Put the following in your `shell.nix`:
+Put the following in your `default.nix`:
 
 ```nix
 { pkgs ? import <nixpkgs> {}, nodelock2nix ? <FIXME> { inherit pkgs; } }:
-npmlock2nix.build {
+(npmlock2nix.setup {
   src = ./.; # mandatory
-  installPhase = "cp -r dist $out"; # mandatory
+  buildAttrs.installPhase = "cp -r dist $out"; # mandatory
   # optionally:
   # buildCommands = [ "npm run build" ];
   # node_modules_mode = "symlink", (default; or "copy")
   # You can override attributes passed to `node_modules` by setting
-  # `node_modules_attrs` like below.
+  # `nodeModulesAttrs` like below.
   # A few attributes (such as `nodejs` and `src`) are always inherited from the
   # shell's arguments but can be overriden.
-  # node_modules_attrs = {
+  # nodeModulesAttrs = {
   #   buildInputs = [ pkgs.libwebp ];
   # };
+}).build
+```
+
+# Using both shell and build at once
+
+You can set up a project once and use both shell and build outputs:
+
+In `default.nix`:
+
+```nix
+({ pkgs ? import <nixpkgs> {}, nodelock2nix ? <FIXME> { inherit pkgs; } }:
+{
+  nodeProject = npmlock2nix.setup {
+    src = ./.;
+    buildAttrs.installPhase = "cp -r dist $out";
+  };
+
+  myBuild = project.build;
 }
+```
+
+In `shell.nix`:
+
+```nix
+let default = (import ./.) {}; in
+default.nodeProject.shell
 ```
 
 # Building the `node_modules` folder
@@ -72,7 +97,7 @@ rebuilding the project (with the same dependencies) quicker.
 
 ```nix
 { pkgs ? import <nixpkgs> {}, nodelock2nix ? <FIXME> { inherit pkgs; } }:
-npmlock2nix.node_modules {
+(npmlock2nix.setup {
   src = ./.;
   # buildInputs = [ … ];
 
@@ -88,6 +113,6 @@ npmlock2nix.node_modules {
   # You can set any desired environment by just adding them to this set just
   # like you would do in a regular `stdenv.mkDerivation` invocation:
   # MY_ENVIRONMENT_VARIABLE = "foo";
-}
+}).node_modules
 ```
 
